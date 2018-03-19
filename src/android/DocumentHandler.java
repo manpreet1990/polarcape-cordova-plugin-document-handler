@@ -1,6 +1,5 @@
 package ch.ti8m.phonegap.plugins;
 
-import java.io.*;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -8,8 +7,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Iterator;
 
-import org.apache.cordova.BuildConfig;
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
 import org.json.JSONArray;
@@ -22,6 +21,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Environment;
 import android.webkit.CookieManager;
 import android.webkit.MimeTypeMap;
 
@@ -30,6 +30,7 @@ import android.support.v4.content.FileProvider;
 public class DocumentHandler extends CordovaPlugin {
 
     public static final String HANDLE_DOCUMENT_ACTION = "HandleDocumentWithURL";
+    public static final String DOWNLOAD_DOCUMENT_ACTION = "DownloadDocument";
     public static final int ERROR_NO_HANDLER_FOR_DATA_TYPE = 53;
     public static final int ERROR_FILE_NOT_FOUND = 2;
     public static final int ERROR_UNKNOWN_ERROR = 1;
@@ -52,7 +53,75 @@ public class DocumentHandler extends CordovaPlugin {
 
             return true;
         }
+
+        if(DOWNLOAD_DOCUMENT_ACTION.equals(action)) {
+            final JSONObject arg_object = args.getJSONObject(0);
+            final String url = arg_object.getString("url");
+            final String fileName = arg_object.getString("fileName");
+            final JSONObject headers = arg_object.getJSONObject("headers");
+            downloadDocumentUsingDownloadManager(url, fileName, headers, callbackContext);
+            return true;
+        }
         return false;
+    }
+
+    private void downloadDocumentUsingDownloadManager(String url, String fileName, JSONObject headers, CallbackContext callbackContext) {
+        if (url != null && url.length() > 0) {
+            android.app.DownloadManager downloadManager = (android.app.DownloadManager) cordova.getActivity().getApplicationContext().getSystemService(Context.DOWNLOAD_SERVICE);
+            Uri Download_Uri = Uri.parse(url);
+            android.app.DownloadManager.Request request = new android.app.DownloadManager.Request(Download_Uri);
+            if (headers != null) {
+                addHeadersToRequest(request, headers);
+            }
+            request.setTitle(fileName);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+            request.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            long downloadReference = downloadManager.enqueue(request);
+            callbackContext.success(url);
+        } else {
+            callbackContext.error("file url should be non-empty.");
+        }
+    }
+
+    private static void addHeadersToRequest(android.app.DownloadManager.Request connection, JSONObject headers) {
+        try {
+            for (Iterator<?> iter = headers.keys(); iter.hasNext(); ) {
+                /* RFC 2616 says that non-ASCII characters and control
+                 * characters are not allowed in header names or values.
+                 * Additionally, spaces are not allowed in header names.
+                 * RFC 2046 Quoted-printable encoding may be used to encode
+                 * arbitrary characters, but we donon- not do that encoding here.
+                 */
+                String headerKey = iter.next().toString();
+                String cleanHeaderKey = headerKey.replaceAll("\\n","")
+                        .replaceAll("\\s+","")
+                        .replaceAll(":", "")
+                        .replaceAll("[^\\x20-\\x7E]+", "");
+
+                JSONArray headerValues = headers.optJSONArray(headerKey);
+                if (headerValues == null) {
+                    headerValues = new JSONArray();
+
+                     /* RFC 2616 also says that any amount of consecutive linear
+                      * whitespace within a header value can be replaced with a
+                      * single space character, without affecting the meaning of
+                      * that value.
+                      */
+
+                    String headerValue = headers.getString(headerKey);
+                    String finalValue = headerValue.replaceAll("\\s+", " ").replaceAll("\\n"," ").replaceAll("[^\\x20-\\x7E]+", " ");
+                    headerValues.put(finalValue);
+                }
+
+                //Use the clean header key, not the one that we passed in
+                connection.addRequestHeader(cleanHeaderKey, headerValues.getString(0));
+                for (int i = 1; i < headerValues.length(); ++i) {
+                    connection.addRequestHeader(headerKey, headerValues.getString(i));
+                }
+            }
+        } catch (JSONException e1) {
+            // No headers to be manipulated!
+        }
     }
 
     // used for all downloaded files, so we can find and delete them again.
